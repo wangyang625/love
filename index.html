@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>给你的情话</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0612}
+  body{font-family:"Microsoft YaHei","微软雅黑","PingFang SC",sans-serif}
+  canvas#stage{position:fixed;inset:0;display:block}
+
+  /* 开场遮罩：浏览器要求先有一次点击才允许播放声音 */
+  #gate{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;
+        align-items:center;justify-content:center;gap:22px;cursor:pointer;
+        background:radial-gradient(120% 90% at 50% 45%, #1b0b23 0%, #0d0616 55%, #06030b 100%);
+        transition:opacity .9s ease}
+  #gate.hide{opacity:0;pointer-events:none}
+  #gate .btn{
+    font-family:"KaiTi","楷体","STKaiti",serif;font-weight:700;
+    font-size:clamp(17px,2.1vw,24px);letter-spacing:.42em;text-indent:.42em;
+    color:#ffe6f0;background:transparent;border:1px solid rgba(255,140,185,.55);
+    border-radius:999px;padding:16px 40px;cursor:pointer;
+    box-shadow:0 0 24px rgba(255,90,155,.28), 0 0 70px rgba(255,60,140,.16) inset;
+    transition:box-shadow .4s ease, transform .4s ease, border-color .4s ease}
+  #gate .btn:hover{transform:translateY(-2px);border-color:rgba(255,180,210,.95);
+    box-shadow:0 0 34px rgba(255,110,170,.55), 0 0 90px rgba(255,70,150,.28) inset}
+  #gate .tip{font-size:12px;letter-spacing:.3em;text-indent:.3em;color:rgba(255,205,225,.42)}
+
+  /* 结尾的中央告白 */
+  #finalLine{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;
+    opacity:0;transition:opacity .9s ease;pointer-events:none;white-space:nowrap;
+    font-family:"KaiTi","楷体","STKaiti",serif;font-weight:700;
+    font-size:clamp(22px,3.6vw,52px);letter-spacing:.14em;color:#fff2f7;
+    text-shadow:0 0 14px rgba(255,120,170,.9), 0 0 42px rgba(255,80,150,.55), 0 0 96px rgba(255,60,140,.32)}
+  #flGhost{visibility:hidden}
+  #flText{position:absolute;left:50%;top:0;transform:translateX(-50%)}
+
+  /* 随机弹窗 */
+  #popupLayer{position:fixed;inset:0;z-index:10;pointer-events:none}
+  .popup{position:absolute;
+    padding:clamp(9px,1.1vw,15px) clamp(13px,1.6vw,22px);
+    border-radius:15px;max-width:min(72vw,340px);text-align:center;
+    font-size:clamp(12.5px,1.25vw,17px);line-height:1.55;font-weight:600;
+    color:#3a1c36;letter-spacing:.04em;word-break:break-word;
+    border:1px solid rgba(255,255,255,.6);
+    box-shadow:0 12px 34px rgba(0,0,0,.42), 0 0 0 1px rgba(255,255,255,.18) inset;
+    transform:translate(-50%,-50%) scale(.86);opacity:0;
+    transition:opacity .55s ease, transform .55s cubic-bezier(.22,1.35,.4,1)}
+  .popup.show{transform:translate(-50%,-50%) scale(1);opacity:1}
+  .popup.hide{transform:translate(-50%,-50%) scale(.9);opacity:0}
+</style>
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+<div id="popupLayer"></div>
+
+<div id="finalLine"><span id="flGhost"></span><span id="flText"></span></div>
+
+<div id="gate">
+  <button class="btn" id="startBtn">轻 触 开 启</button>
+  <div class="tip">请打开声音</div>
+</div>
+
+<audio id="bgm" loop></audio>
+
+<script>
+(function () {
+'use strict';
+
+/* =====================================================================
+   ↓↓↓ 你只需要改这一段 ↓↓↓
+   每一句都写成 "引号里的文字"，句与句之间用英文逗号隔开。
+   卡片上的话建议 4~5 个字（太长了会在卡片里挤），弹窗里的话可以长一些。
+   ===================================================================== */
+const CONFIG = {
+
+  // 爱心上一圈卡片写的碎碎念
+  CARD_TEXTS: [
+    '好好吃饭', '别熬夜了', '天冷加衣', '多喝热水', '我好想你', '我爱你呀',
+    '早点休息', '要吃早饭', '开开心心', '你辛苦啦', '抱抱你呀', '想见你了',
+    '照顾自己', '别太累了', '有我在呢', '你超级棒', '开心第一', '慢慢来吧',
+    '我在想你', '今天好吗', '出门带伞', '路上小心', '别皱眉啦', '多笑笑呀',
+    '一件一件', '别有压力', '我陪着你', '到家说声', '记得吃饭', '少喝奶茶',
+    '早点睡哦', '你值得的', '每天都想', '想抱抱你', '你要好好的', '风雨都陪',
+    '你不用担心', '我一直都在', '心里都是你', '最最喜欢你'
+  ],
+
+  // 动画结束之后，随机弹窗里的话
+  POPUP_TEXTS: [
+    '遇见你之后，日子才开始有光。',
+    '我不太会说情话，但我每天都在想你。',
+    '你在我心里的位置，谁都替代不了。',
+    '想和你一起，把日子慢慢过成喜欢的样子。',
+    '你开心的时候最好看，可你什么样我都喜欢。',
+    '以后的路，我想和你一起走。',
+    '想陪你吃很多很多顿饭。',
+    '你是我最想珍惜的人。',
+    '想把所有的温柔都给你。',
+    '你就是我的例外和偏爱。',
+    '一想到你，心里就软软的。',
+    '有你的每一天，都值得。',
+    '我会一直在你身边，不走。',
+    '你是我心里最好的事情。',
+    '想和你一起看很多次日落。',
+    '你笑起来的时候，我什么都忘了。',
+    '想把最好的都留给你。',
+    '别怕，有我在。',
+    '我很庆幸，遇见的是你。',
+    '想牵着你的手，走很久很久。',
+    '你值得被好好爱着。',
+    '以后每一个冬天，都想和你一起过。'
+  ],
+
+  // 中央最后打出来的那句话（想加她的名字就写在这里，比如 '林小雨，遇见你是我最好的运气'）
+  FINAL_LINE: '遇见你，是我最好的运气,爱你蕊',
+
+  // 背景音乐：把下载好的 mp3 放在本文件旁边，文件名写在这里。
+  // 现在指向 'music.mp3' —— 从 Pixabay 下完，重命名成 music.mp3 放进同一文件夹就行。
+  // 如果文件不在（或放错了位置），会自动改用内置的柔和轻音乐，不会变成哑巴。
+  MUSIC_FILE: 'music.mp3',
+
+  // —— 节奏，单位毫秒。改小一点更快，改大一点更慢 ——
+  CARD_COUNT:    90,    // 卡片最多多少张（屏幕小的时候会自动减少，保证字看得清）
+  GROW_STEP:     70,    // 每张卡片出现的间隔
+  HOLD_MS:       1000,  // 全部出现后停顿多久
+  RETRACT_STEP:  45,    // 回收时每张卡片的间隔
+  TYPE_STEP:     150,   // 结尾那句话每个字打出来的间隔
+  POPUP_EVERY:   1200,  // 每隔多久弹出一个
+  POPUP_LIFE:    3200   // 每个弹窗停留多久
+};
+/* =====================================================================
+   ↑↑↑ 你只需要改这一段 ↑↑↑
+   ===================================================================== */
+
+
+/* ---------- 基础工具 ---------- */
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+const easeOutCubic = u => 1 - Math.pow(1 - u, 3);
+const randPick = arr => arr[(Math.random() * arr.length) | 0];
+
+const cv  = document.getElementById('stage');
+const ctx = cv.getContext('2d');
+const popupLayer = document.getElementById('popupLayer');
+
+let vw = 0, vh = 0, scale = 1, lockedCount = null;
+
+
+/* ---------- 爱心曲线 ----------
+   x = 16·sin³t
+   y = 13·cos t − 5·cos2t − 2·cos3t − cos4t
+   注意 canvas 的 y 轴朝下，所以把 y 取反，爱心才是正的。
+   同时预先算出「累计弧长表」，这样卡片才能沿轮廓等距分布。            */
+const HEART = (function () {
+  const N = 2400;
+  const xs = new Float64Array(N + 1);
+  const ys = new Float64Array(N + 1);
+  const cum = new Float64Array(N + 1);
+  let len = 0;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N * Math.PI * 2;
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    const px = x, py = -y;
+    if (i > 0) len += Math.hypot(px - xs[i - 1], py - ys[i - 1]);
+    xs[i] = px; ys[i] = py; cum[i] = len;
+  }
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i <= N; i++) {
+    if (xs[i] < x0) x0 = xs[i];
+    if (xs[i] > x1) x1 = xs[i];
+    if (ys[i] < y0) y0 = ys[i];
+    if (ys[i] > y1) y1 = ys[i];
+  }
+  return { N, xs, ys, cum, len, x0, x1, y0, y1,
+           cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+})();
+
+// 已知弧长 s，反查爱心上的坐标
+function pointAtArc(s) {
+  const L = HEART.len;
+  s = ((s % L) + L) % L;
+  let lo = 0, hi = HEART.N;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (HEART.cum[mid] < s) lo = mid + 1; else hi = mid;
+  }
+  const i = Math.max(1, lo);
+  const c0 = HEART.cum[i - 1], c1 = HEART.cum[i];
+  const f = c1 > c0 ? (s - c0) / (c1 - c0) : 0;
+  return [
+    HEART.xs[i - 1] + (HEART.xs[i] - HEART.xs[i - 1]) * f,
+    HEART.ys[i - 1] + (HEART.ys[i] - HEART.ys[i - 1]) * f
+  ];
+}
+
+
+/* ---------- 排版：算出卡片的位置、大小、颜色 ---------- */
+const COLORS = 20;                 // 彩虹色板分成 20 段，绕爱心一圈正好走完一轮
+const MAX_CHARS = Math.max.apply(null,
+  CONFIG.CARD_TEXTS.map(s => Array.from(s).length));
+
+let cards = [];                    // { x, y, w, h, r, text, hue }
+let count = 0;
+
+function layout() {
+  if (lockedCount !== null) count = lockedCount;   // 已经开始了就不中途改数量
+
+  const bw = HEART.x1 - HEART.x0;
+  const bh = HEART.y1 - HEART.y0;
+
+  // 爱心 + 卡片外扩，整体占屏幕约 1/1.32，四周留白
+  scale = Math.min(vw / (bw * 1.32), vh / (bh * 1.32));
+
+  if (lockedCount === null) {
+    // 反推：想要多大的字 → 卡片该多大 → 需要多少张卡片
+    const targetFont = clamp(Math.min(vw, vh) * 0.018, 10.5, 20);
+    const k = Math.min(0.86 / MAX_CHARS, 0.26);   // 字号 / 卡片长度
+    const cardLenPx = targetFont / k;
+    const spacingPx = cardLenPx / 2.2;
+    count = clamp(Math.round(HEART.len * scale / spacingPx), 28, CONFIG.CARD_COUNT);
+  }
+
+  const spacingU = HEART.len / count;             // 单位空间里的弧长间距
+  const lenU     = spacingU * 2.2;                // 卡片长边（1.6 倍间距 → 相邻重叠约 55%）
+  const thkU     = lenU * 0.42;                   // 卡片短边
+  const fontPx   = Math.min(lenU * 0.86 / MAX_CHARS, thkU * 0.64) * scale;
+  const radiusPx = thkU * scale * 0.30;
+
+  cards = [];
+  for (let i = 0; i < count; i++) {
+    const p = pointAtArc((i + 0.5) * spacingU);
+    cards.push({
+      x: (p[0] - HEART.cx) * scale,
+      y: (p[1] - HEART.cy) * scale,
+      w: lenU * scale,
+      h: thkU * scale,
+      r: radiusPx,
+      font: fontPx,
+      text: CONFIG.CARD_TEXTS[i % CONFIG.CARD_TEXTS.length],
+      hue: (i / count) * 360          // 色相绕一整圈 → 彩虹
+    });
+  }
+  drawCards(-1);                      // 重排后立刻按当前状态重绘一次
+}
+
+function roundRect(c, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.lineTo(x + w - r, y);
+  c.arcTo(x + w, y, x + w, y + r, r);
+  c.lineTo(x + w, y + h - r);
+  c.arcTo(x + w, y + h, x + w - r, y + h, r);
+  c.lineTo(x + r, y + h);
+  c.arcTo(x, y + h, x, y + h - r, r);
+  c.lineTo(x, y + r);
+  c.arcTo(x, y, x + r, y, r);
+  c.closePath();
+}
+
+
+/* ---------- 星点背景 ---------- */
+const stars = [];
+function buildStars() {
+  stars.length = 0;
+  const n = clamp(Math.round(vw * vh / 11000), 40, 170);
+  for (let i = 0; i < n; i++) {
+    stars.push({
+      x: Math.random() * vw,
+      y: Math.random() * vh,
+      r: Math.random() * 1.5 + 0.4,
+      a: Math.random() * 0.5 + 0.28,
+      ph: Math.random() * Math.PI * 2,
+      tw: 0.0006 + Math.random() * 0.0016,
+      vy: 0.006 + Math.random() * 0.016,
+      hue: Math.random() < 0.5 ? 330 : 205
+    });
+  }
+}
+function tickStars(dt) {
+  for (let i = 0; i < stars.length; i++) {
+    const s = stars[i];
+    s.ph += s.tw * dt;
+    s.y -= s.vy * dt;
+    if (s.y < -6) { s.y = vh + 6; s.x = Math.random() * vw; }
+  }
+}
+function drawStars() {
+  for (let i = 0; i < stars.length; i++) {
+    const s = stars[i];
+    const a = s.a * (0.5 + 0.5 * Math.sin(s.ph));
+    ctx.beginPath();
+    ctx.fillStyle = 'hsla(' + s.hue + ',92%,80%,' + a.toFixed(3) + ')';
+    ctx.arc(s.x, s.y, s.r, 0, 6.2832);
+    ctx.fill();
+  }
+}
+
+
+/* ---------- 时间轴 ----------
+   整套动画是「可推算」的：只要知道当前时刻，就能直接算出每张卡片
+   应该在什么状态。所以出场、停顿、原路回收都严格按顺序，不会错乱。  */
+let tGrowEnd = 0, tHoldEnd = 0, tRetractEnd = 0;
+const POP_MS = 340;                 // 单张卡片"冒出"或"收回"的用时
+
+function buildTimeline(n) {
+  tGrowEnd    = (n - 1) * CONFIG.GROW_STEP + POP_MS;
+  tHoldEnd    = tGrowEnd + CONFIG.HOLD_MS;
+  tRetractEnd = tHoldEnd + (n - 1) * CONFIG.RETRACT_STEP + POP_MS;
+}
+
+// 求出第 i 张卡片在时刻 T 的不透明度和缩放
+function cardState(i, T) {
+  const born = i * CONFIG.GROW_STEP;
+  // 回收是逆序：最后出现的先收回，所以死亡时间按 (n-1-i) 排
+  const die = tHoldEnd + (count - 1 - i) * CONFIG.RETRACT_STEP;
+
+  let a, sc;
+  if (T < born) {
+    return { a: 0, s: 0.6 };
+  } else if (T < born + POP_MS) {
+    const u = easeOutCubic((T - born) / POP_MS);
+    a = u;
+    sc = 0.6 + 0.4 * u * (1 + 0.12 * Math.sin(Math.PI * u));   // 带一点点回弹
+  } else if (T < die) {
+    a = 1; sc = 1;
+  } else if (T < die + POP_MS) {
+    const u = easeOutCubic((T - die) / POP_MS);
+    a = 1 - u; sc = 1 - 0.45 * u;
+  } else {
+    return { a: 0, s: 0.55 };
+  }
+  return { a: a, s: sc };
+}
+
+function drawCards(T) {
+  ctx.clearRect(0, 0, vw, vh);
+  drawStars();
+  if (!cards.length) return;
+
+  // 爱心完整时的那点"呼吸"：只在它成形之后才发光
+  let glow = 1;
+  if (T >= tGrowEnd && T < tRetractEnd) {
+    glow = 1 + 0.30 * Math.sin((T - tGrowEnd) / 260);
+  }
+
+  const midX = vw / 2, midY = vh / 2;
+
+  for (let i = 0; i < cards.length; i++) {
+    const st = cardState(i, T);
+    if (st.a <= 0.001) continue;
+
+    const c = cards[i];
+    const x = midX + c.x;
+    const y = midY + c.y;
+    const w = c.w * st.s, h = c.h * st.s;
+
+    ctx.save();
+    ctx.globalAlpha = st.a;
+    ctx.translate(x, y);
+
+    // 卡片本体：上浅下深的渐变，看着像有一点点厚度
+    const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+    g.addColorStop(0, 'hsl(' + c.hue + ',88%,89%)');
+    g.addColorStop(1, 'hsl(' + c.hue + ',78%,71%)');
+
+    ctx.shadowColor = 'hsla(' + c.hue + ',92%,64%,' + (0.5 * Math.min(glow, 1.3)) + ')';
+    ctx.shadowBlur = 14 * glow;
+    ctx.fillStyle = g;
+    roundRect(ctx, -w / 2, -h / 2, w, h, c.r);
+    ctx.fill();
+
+    // 卡片上的字：深色才在浅色卡面上看得清
+    ctx.shadowColor = 'rgba(255,255,255,.55)';
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'hsl(300,26%,20%)';
+    ctx.font = '700 ' + c.font + 'px "Microsoft YaHei","微软雅黑","PingFang SC",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(c.text, 0, h * 0.03);
+
+    ctx.restore();
+  }
+}
+
+
+/* ---------- 结尾：中央告白（打字机） ---------- */
+const flBox    = document.getElementById('finalLine');
+const flGhost  = document.getElementById('flGhost');
+const flText   = document.getElementById('flText');
+
+function typeFinal(done) {
+  const s = CONFIG.FINAL_LINE;
+  const chars = Array.from(s);
+  flGhost.textContent = s;             // 用一句等长的隐形文字撑住宽度，打字时不会左右跳
+  flText.textContent = '';
+  flBox.style.opacity = 1;
+  let i = 0;
+  (function tick() {
+    flText.textContent = chars.slice(0, ++i).join('');
+    if (i < chars.length) setTimeout(tick, CONFIG.TYPE_STEP);
+    else if (done) done();
+  })();
+}
+
+
+/* ---------- 随机弹窗 ---------- */
+const liveRects = [];
+const recentPopups = [];
+
+// 别让同一句话在屏幕上同时出现两遍
+function nextPopupText() {
+  const pool = CONFIG.POPUP_TEXTS;
+  if (pool.length < 2) return pool[0];
+  let t, guard = 0;
+  do { t = randPick(pool); } while (recentPopups.indexOf(t) >= 0 && ++guard < 30);
+  recentPopups.push(t);
+  if (recentPopups.length > Math.min(6, pool.length - 1)) recentPopups.shift();
+  return t;
+}
+
+function spawnPopup() {
+  const el = document.createElement('div');
+  el.className = 'popup';
+  el.textContent = nextPopupText();
+
+  const hue = (Math.random() * 360) | 0;
+  el.style.background =
+    'linear-gradient(160deg, hsl(' + hue + ',88%,94%), hsl(' + hue + ',72%,80%))';
+  el.style.visibility = 'hidden';
+  el.style.left = '0px';
+  el.style.top = '0px';
+  popupLayer.appendChild(el);
+
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const m = 10;                                       // 距屏幕边缘
+  const pad = 12;                                     // 弹窗之间留的缝
+
+  // 中央留给那句告白，弹窗不要压在它上面
+  const keepOut = {
+    x: vw / 2 - Math.max(200, flBox.offsetWidth / 2 + 28),
+    y: vh / 2 - 70,
+    w: Math.max(400, flBox.offsetWidth + 56),
+    h: 140
+  };
+
+  let best = null;
+  for (let tries = 0; tries < 14; tries++) {
+    const cx = m + w / 2 + Math.random() * Math.max(1, vw - w - 2 * m);
+    const cy = m + h / 2 + Math.random() * Math.max(1, vh - h - 2 * m);
+    const r = { x: cx - w / 2, y: cy - h / 2, w: w, h: h };
+    const hitKeepOut = !(r.x + r.w < keepOut.x || r.x > keepOut.x + keepOut.w ||
+                         r.y + r.h < keepOut.y || r.y > keepOut.y + keepOut.h);
+    const hitOther = liveRects.some(o =>
+      !(r.x + r.w + pad < o.x || r.x - pad > o.x + o.w ||
+        r.y + r.h + pad < o.y || r.y - pad > o.y + o.h));
+    if (!hitKeepOut && !hitOther) { best = { x: cx, y: cy, rect: r }; break; }
+    if (!best && !hitKeepOut) best = { x: cx, y: cy, rect: r };
+  }
+  if (!best) {
+    best = {
+      x: m + w / 2 + Math.random() * Math.max(1, vw - w - 2 * m),
+      y: m + h / 2 + Math.random() * Math.max(1, vh - h - 2 * m)
+    };
+    best.rect = { x: best.x - w / 2, y: best.y - h / 2, w: w, h: h };
+  }
+
+  el.style.left = best.x + 'px';
+  el.style.top = best.y + 'px';
+  el.style.visibility = 'visible';
+  liveRects.push(best.rect);
+
+  requestAnimationFrame(function () { el.classList.add('show'); });
+
+  setTimeout(function () {
+    el.classList.remove('show');
+    el.classList.add('hide');
+    const idx = liveRects.indexOf(best.rect);
+    if (idx >= 0) liveRects.splice(idx, 1);
+    setTimeout(function () { el.remove(); }, 700);
+  }, CONFIG.POPUP_LIFE);
+}
+
+
+/* ---------- 背景音乐 ----------
+   优先级：CONFIG.MUSIC_FILE 指向的外部 mp3 → 页面内嵌的音乐（单文件版用）
+          → 用 Web Audio 现场合成一段柔和的钢琴式琶音（不会没声音）。
+   注意外部 mp3 是相对「本 html 所在文件夹」找的，必须和 html 放在一起。  */
+let audioCtx = null;
+
+function startMusic() {
+  const bgm = document.getElementById('bgm');
+  const file = (CONFIG.MUSIC_FILE || '').trim();
+
+  if (!file) { synthMusic(); return; }        // 没配 mp3 → 用内置音乐
+  bgm.src = file;                             // mp3 必须和 html 放在同一个文件夹
+
+  const target = 0.6;                         // 想更响/更轻就改这个数（最大 1）
+  bgm.volume = 0.12;                          // 从很轻开始，别一上来就砸到耳朵
+  bgm.play().then(function () {
+    let v = 0.12;
+    const fade = setInterval(function () {
+      v = Math.min(target, v + target / 60);
+      bgm.volume = v;
+      if (v >= target) clearInterval(fade);
+    }, 50);                                   // 约 3 秒淡入
+  }).catch(function () { synthMusic(); });    // 加载失败 → 用内置音乐兜底
+}
+
+function synthMusic() {
+  const actx = audioCtx;
+  if (!actx) return;                          // 没有可用的音频上下文就放弃（不会报错）
+
+  // 总音量，顺便切掉刺耳的高频（之前发尖就是少了这一步）
+  const master = actx.createGain();
+  master.gain.value = 0.0001;
+  const soft = actx.createBiquadFilter();
+  soft.type = 'lowpass';
+  soft.frequency.value = 2400;
+  soft.Q.value = 0.5;
+  master.connect(soft);
+  soft.connect(actx.destination);
+  master.gain.exponentialRampToValueAtTime(0.17, actx.currentTime + 4);
+
+  // 两条弱回授 + 阻尼，做出柔和的余韵，而不是金属味的"叮叮"
+  const wet = actx.createGain();
+  wet.gain.value = 0.24;
+  [[0.29, 0.22], [0.43, 0.16]].forEach(function (d) {
+    const dl = actx.createDelay(2);
+    dl.delayTime.value = d[0];
+    const fb = actx.createGain(); fb.gain.value = d[1];
+    const damp = actx.createBiquadFilter();
+    damp.type = 'lowpass'; damp.frequency.value = 1400;
+    dl.connect(damp); damp.connect(fb); fb.connect(dl);
+    dl.connect(wet);
+  });
+  wet.connect(master);
+
+  // I – vi – IV – V，每小节 4.8 秒。旋律只在当前和弦的音里挑，
+  // 所以永远不会撞出难听的音程（之前的"随机游走"就会）
+  const PROG = [
+    { bass: 130.81, tones: [261.63, 329.63, 392.00, 493.88] }, // Cmaj7
+    { bass: 110.00, tones: [220.00, 261.63, 329.63, 392.00] }, // Am7
+    { bass:  87.31, tones: [174.61, 220.00, 261.63, 329.63] }, // Fmaj7
+    { bass:  98.00, tones: [196.00, 246.94, 293.66, 392.00] }  // G
+  ];
+  const STEP = 0.8, BAR = 6;
+  let bar = 0, step = 0, next = actx.currentTime + 0.2;
+
+  function note(freq, at, dur, vol) {
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.linearRampToValueAtTime(vol, at + 0.30);       // 慢起音 → 软
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    // 纯正弦 + 一点八度泛音，比三角波温暖得多
+    const o1 = actx.createOscillator();
+    o1.type = 'sine'; o1.frequency.value = freq;
+    const o2 = actx.createOscillator();
+    o2.type = 'sine'; o2.frequency.value = freq * 2;
+    const g2 = actx.createGain(); g2.gain.value = 0.12;
+    o1.connect(g); o2.connect(g2); g2.connect(g);
+    g.connect(master); g.connect(wet);
+    o1.start(at); o1.stop(at + dur + 0.05);
+    o2.start(at); o2.stop(at + dur + 0.05);
+  }
+
+  setInterval(function () {
+    if (actx.state === 'suspended') actx.resume();
+    while (next < actx.currentTime + 1.2) {
+      const chord = PROG[bar % PROG.length];
+      if (step === 0) note(chord.bass, next, 5.6, 0.15);            // 低音铺底
+      const order = [0, 1, 2, 3, 2, 1];                             // 上下行琶音
+      let k = order[step % order.length];
+      if (step > 0 && Math.random() < 0.15) k = (k + 1) % chord.tones.length;
+      note(chord.tones[k], next, 2.9, 0.10);
+      if (++step >= BAR) { step = 0; bar++; }
+      next += STEP;
+    }
+  }, 250);
+}
+
+
+/* ---------- 主循环 ---------- */
+let startedAt = null;
+let firedFinal = false;
+let popupTimer = null;
+let last = performance.now();
+
+function frame(now) {
+  const dt = Math.min(60, now - last);
+  last = now;
+
+  tickStars(dt);
+  const T = startedAt === null ? -1 : now - startedAt;
+  drawCards(T);
+
+  if (startedAt !== null && !firedFinal && T >= tRetractEnd) {
+    firedFinal = true;
+    typeFinal(function () {
+      setTimeout(function () {
+        spawnPopup();
+        popupTimer = setInterval(spawnPopup, CONFIG.POPUP_EVERY);
+      }, 800);
+    });
+  }
+  requestAnimationFrame(frame);
+}
+
+
+/* ---------- 尺寸 ---------- */
+function resize() {
+  vw = window.innerWidth;
+  vh = window.innerHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(vw * dpr);
+  cv.height = Math.round(vh * dpr);
+  cv.style.width = vw + 'px';
+  cv.style.height = vh + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  buildStars();
+  layout();
+}
+
+let resizeTimer = null;
+window.addEventListener('resize', function () {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(resize, 180);
+});
+
+
+/* ---------- 启动 ---------- */
+resize();                  // 先排版，算出 scale / 卡片数量 / 每张卡片的位置
+buildTimeline(count);
+requestAnimationFrame(frame);
+
+/* ---------- 开场 ---------- */
+const gate = document.getElementById('gate');
+
+function begin() {
+  if (startedAt !== null) return;
+
+  // 趁还待在"点击"这个手势里，先把 AudioContext 建好并唤醒。
+  // 否则等 mp3 加载失败再临时新建，浏览器因为拿不到手势会把它挂起
+  // —— 结果就是"mp3 没找到、内置音乐也不响"，一点声音都没有。
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) { try { audioCtx = new AC(); } catch (e) { audioCtx = null; } }
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+
+  lockedCount = count;                 // 锁定卡片数量，动画中途缩放窗口也不会错乱
+  buildTimeline(count);
+  startedAt = performance.now();
+  gate.classList.add('hide');
+  setTimeout(function () { gate.style.display = 'none'; }, 1000);
+  startMusic();
+}
+
+gate.addEventListener('click', begin);
+
+})();
+</script>
+</body>
+</html>
